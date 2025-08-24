@@ -1,0 +1,12 @@
+[project]
+name = "itri-fr-3-test"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=45.0.6",
+    "msgpack>=1.1.1",
+    "pynacl>=1.5.0",
+    "pytest>=8.4.1",
+]

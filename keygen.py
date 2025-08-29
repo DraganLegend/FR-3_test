@@ -59,13 +59,14 @@ def b64(x: bytes) -> str:
 
 def write_json(path: str, obj: dict, secret: bool = False):
     data = json.dumps(obj, ensure_ascii=False, indent=2)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(data)
     if secret:
-        try:
-            os.chmod(path, 0o600)
-        except Exception:
-            pass
+        # 直接以 0600 權限建立檔案，避免先產生寬鬆權限後再修改造成的短暫暴露
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
+    else:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(data)
     print(f"[OK] wrote {path}")
 
 def main():

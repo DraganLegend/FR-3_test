@@ -64,24 +64,34 @@ class Verifier:
         self.keyring: dict[str, Tuple[str, bytes]] = {}
         for pid, d in pubdocs.items():
             self.keyring[pid] = (d["alg"], base64.b64decode(d["pubkey_b64"]))
-        self.seen: set[Tuple[str, str]] = set()
+        # (pubkey_id, nonce) -> timestamp
+        self.seen: dict[Tuple[str, str], int] = {}
 
     def verify(self, signed: Dict[str, Any]) -> Tuple[bool, str]:
         pid = signed.get("pubkey_id")
         if pid not in self.keyring:
             return False, "ERR_NO_SUCH_PUBKEY_ID"
-        ts = int(signed.get("ts", 0))
+        try:
+            ts = int(signed.get("ts", 0))
+        except (TypeError, ValueError):
+            return False, "ERR_BAD_TS"
         if abs(now_ms() - ts) > self.window_ms:
             return False, "ERR_TS_WINDOW"
         nonce = str(signed.get("nonce", ""))
         key = (pid, nonce)
+        now = now_ms()
+        # 清理過期的 nonce，避免記憶體洩漏
+        expiry = now - self.window_ms
+        self.seen = {k: t for k, t in self.seen.items() if t >= expiry}
         if key in self.seen:
             return False, "ERR_REPLAY"
         try:
-            import base64 as b64
-            sig = b64.b64decode(signed.get("signature", ""))
+            sig = base64.b64decode(signed.get("signature", ""), validate=True)
         except Exception:
             return False, "ERR_BAD_BASE64"
+        missing = [k for k in SIGNED_FIELDS if k not in signed]
+        if missing:
+            return False, "ERR_MISSING_FIELDS"
         part = {k: signed[k] for k in SIGNED_FIELDS}
         alg, pk = self.keyring[pid]
         try:
@@ -91,7 +101,7 @@ class Verifier:
             return False, "ERR_VERIFY_EXCEPTION"
         if not ok:
             return False, "ERR_BAD_SIGNATURE"
-        self.seen.add(key)
+        self.seen[key] = now
         return True, "OK"
 
 def cli():

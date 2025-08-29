@@ -111,8 +111,8 @@ class Verifier:
         # pubkey_id -> (alg, pk)
         self.keyring: Dict[str, Tuple[str, bytes]] = {}
         for pid, meta in trustlist.items():
-            self.keyring[pid] = (meta.get("alg", SCHEME), meta["pubkey"]) 
-        self.seen: set[Tuple[str, str]] = set()  # (pubkey_id, nonce)
+            self.keyring[pid] = (meta.get("alg", SCHEME), meta["pubkey"])
+        self.seen: Dict[Tuple[str, str], int] = {}  # (pubkey_id, nonce) -> ts
 
     def verify(self, signed: Dict[str, Any]) -> Tuple[bool, str]:
         # 1) whitelist
@@ -120,19 +120,28 @@ class Verifier:
         if pid not in self.keyring:
             return False, "ERR_NO_SUCH_PUBKEY_ID"
         # 2) timestamp window
-        ts = int(signed.get("ts", 0))
+        try:
+            ts = int(signed.get("ts", 0))
+        except (TypeError, ValueError):
+            return False, "ERR_BAD_TS"
         if abs(now_ms() - ts) > self.window_ms:
             return False, "ERR_TS_WINDOW"
         # 3) anti‑replay (per pubkey_id)
         nonce = str(signed.get("nonce", ""))
         key = (pid, nonce)
+        now = now_ms()
+        expiry = now - self.window_ms
+        self.seen = {k: t for k, t in self.seen.items() if t >= expiry}
         if key in self.seen:
             return False, "ERR_REPLAY"
         # 4) signature
         try:
-            sig = base64.b64decode(signed.get("signature", ""))
+            sig = base64.b64decode(signed.get("signature", ""), validate=True)
         except Exception:
             return False, "ERR_BAD_BASE64"
+        missing = [k for k in _SIGNED_FIELDS if k not in signed]
+        if missing:
+            return False, "ERR_MISSING_FIELDS"
         part = {k: signed[k] for k in _SIGNED_FIELDS}
         alg, pk = self.keyring[pid]
         try:
@@ -143,7 +152,7 @@ class Verifier:
         if not ok:
             return False, "ERR_BAD_SIGNATURE"
         # mark nonce only after successful verification
-        self.seen.add(key)
+        self.seen[key] = now
         return True, "OK"
 
 # --- tiny self‑tests ---------------------------------------------------------

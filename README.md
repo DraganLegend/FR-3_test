@@ -27,7 +27,7 @@ This project uses Python 3.12+ and [uv](https://docs.astral.sh/uv/) for environm
 - **`uv`**: If you don't have `uv`, the setup script will try to install it via `pipx` or `brew`.
 - **Build Tools**: A C compiler, `cmake`, and `ninja` are required to build the `liboqs` backend.
   - **On macOS**: `brew install cmake ninja`
-  - **On Debian/Ubuntu**: `sudo apt-get install build-essential cmake ninja-build`
+  - **On Debian/Ubuntu**: `sudo apt-get install build-essential cmake ninja-build libssl-dev`
 
 ### 2. Automated Setup
 

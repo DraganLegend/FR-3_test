@@ -17,26 +17,43 @@ Security hardening highlights:
 
 Current version: **v0.1.0-pre** (Initial pre-release)
 
-## Installation
+## Environment Setup
 
-This project uses Python 3.12+ and `uv` for environment management.
+This project uses Python 3.12+ and [uv](https://docs.astral.sh/uv/) for environment management.
 
-1.  **Install System Dependencies:**
-    On macOS, you need Homebrew to install `liboqs` and its build tools.
-    ```bash
-    brew install liboqs pkg-config cmake ninja
-    ```
+### 1. Prerequisites
 
-2.  **Set up Python Environment and Install Dependencies:**
-    This project's dependencies are defined in `pyproject.toml` and locked in `uv.lock`. Use `uv` to create the environment and sync the dependencies.
-    ```bash
-    # Create the virtual environment and install dependencies from uv.lock
-    uv sync
-    # Activate the environment
-    source .venv/bin/activate
-    # Install the oqs library separately from GitHub
-    uv pip install git+https://github.com/open-quantum-safe/liboqs-python.git
-    ```
+- **Python 3.12+**
+- **`uv`**: If you don't have `uv`, the setup script will try to install it via `pipx` or `brew`.
+- **Build Tools**: A C compiler, `cmake`, and `ninja` are required to build the `liboqs` backend.
+  - **On macOS**: `brew install cmake ninja`
+  - **On Debian/Ubuntu**: `sudo apt-get install build-essential cmake ninja-build`
+
+### 2. Automated Setup
+
+A setup script is provided to create the virtual environment and install all dependencies, including `liboqs-python`.
+
+First, ensure the script is executable:
+```bash
+chmod +x scripts/setup_liboqs_python.sh
+```
+
+Then, run it from the project root:
+```bash
+./scripts/setup_liboqs_python.sh
+```
+This script will:
+1.  Create a virtual environment in `.venv/`.
+2.  Install the required Python packages from `pyproject.toml`.
+3.  Install the `liboqs-python` library and its native `liboqs` dependency.
+4.  Run a quick verification to ensure the cryptographic primitives work correctly.
+
+### 3. Activate Environment
+
+Once the setup is complete, activate the virtual environment:
+```bash
+source .venv/bin/activate
+```
 
 ## Usage
 

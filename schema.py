@@ -19,7 +19,7 @@ Notes:
 - Keys are generated in memory for simplicity; see TODO at bottom to persist to files.
 """
 from __future__ import annotations
-import json, time, secrets, base64, statistics, sys
+import json, time, secrets, base64, statistics, sys, threading
 from typing import Any, Dict, Tuple
 
 # --- dependency check --------------------------------------------------------
@@ -40,7 +40,8 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 def new_nonce(nbytes: int = 12) -> str:
-    return base64.b64encode(secrets.token_bytes(nbytes)).decode()
+    # URL-safe nonce, strip '=' padding
+    return base64.urlsafe_b64encode(secrets.token_bytes(nbytes)).decode().rstrip("=")
 
 # --- select a Dilithium/ML-DSA scheme that exists in your oqs build ---------
 # To improve compatibility, we try multiple oqs API versions
@@ -81,6 +82,13 @@ TRUSTLIST: Dict[str, Dict[str, Any]] = {PUBKEY_ID: {"alg": SCHEME, "pubkey": _PU
 # --- message schema ----------------------------------------------------------
 _SIGNED_FIELDS = ["topic", "seq", "ts", "payload", "nonce", "pubkey_id"]
 
+# limits to mitigate DoS / oversized inputs (aligned with sign_verify.py)
+MAX_CANON_BYTES = 64 * 1024
+MAX_SIG_BYTES = 8 * 1024
+MAX_B64_SIG_LEN = 12 * 1024
+MAX_NONCE_LEN = 256
+MAX_TOPIC_LEN = 128
+
 def make_cmd(linear_x: float, angular_z: float, pubkey_id: str = PUBKEY_ID) -> Dict[str, Any]:
     """Build a minimal /cmd_vel command message (unsigned)."""
     return {
@@ -113,6 +121,7 @@ class Verifier:
         for pid, meta in trustlist.items():
             self.keyring[pid] = (meta.get("alg", SCHEME), meta["pubkey"])
         self.seen: Dict[Tuple[str, str], int] = {}  # (pubkey_id, nonce) -> ts
+        self._lock = threading.Lock()
 
     def verify(self, signed: Dict[str, Any]) -> Tuple[bool, str]:
         # 1) whitelist
@@ -120,6 +129,8 @@ class Verifier:
         if pid not in self.keyring:
             return False, "ERR_NO_SUCH_PUBKEY_ID"
         # 2) timestamp window
+        if not isinstance(signed.get("topic"), str) or not signed["topic"] or len(signed["topic"]) > MAX_TOPIC_LEN:
+            return False, "ERR_BAD_TOPIC"
         try:
             ts = int(signed.get("ts", 0))
         except (TypeError, ValueError):
@@ -128,31 +139,47 @@ class Verifier:
             return False, "ERR_TS_WINDOW"
         # 3) anti‑replay (per pubkey_id)
         nonce = str(signed.get("nonce", ""))
+        if not nonce or len(nonce) > MAX_NONCE_LEN:
+            return False, "ERR_BAD_NONCE"
+        if not isinstance(signed.get("seq"), (int,)):
+            return False, "ERR_BAD_SEQ"
+        if not isinstance(signed.get("payload"), dict):
+            return False, "ERR_BAD_PAYLOAD"
         key = (pid, nonce)
         now = now_ms()
         expiry = now - self.window_ms
-        self.seen = {k: t for k, t in self.seen.items() if t >= expiry}
-        if key in self.seen:
-            return False, "ERR_REPLAY"
+        with self._lock:
+            self.seen = {k: t for k, t in self.seen.items() if t >= expiry}
+            if key in self.seen:
+                return False, "ERR_REPLAY"
         # 4) signature
         try:
-            sig = base64.b64decode(signed.get("signature", ""), validate=True)
+            sig_b64 = signed.get("signature", "")
+            if not isinstance(sig_b64, str) or len(sig_b64) > MAX_B64_SIG_LEN:
+                return False, "ERR_BAD_BASE64"
+            sig = base64.b64decode(sig_b64, validate=True)
         except Exception:
             return False, "ERR_BAD_BASE64"
+        if len(sig) > MAX_SIG_BYTES:
+            return False, "ERR_SIG_TOO_LARGE"
         missing = [k for k in _SIGNED_FIELDS if k not in signed]
         if missing:
             return False, "ERR_MISSING_FIELDS"
         part = {k: signed[k] for k in _SIGNED_FIELDS}
         alg, pk = self.keyring[pid]
         try:
+            part_bytes = canon(part)
+            if len(part_bytes) > MAX_CANON_BYTES:
+                return False, "ERR_MSG_TOO_LARGE"
             with oqs.Signature(alg) as v:
-                ok = v.verify(canon(part), sig, pk)
+                ok = v.verify(part_bytes, sig, pk)
         except Exception:
             return False, "ERR_VERIFY_EXCEPTION"
         if not ok:
             return False, "ERR_BAD_SIGNATURE"
         # mark nonce only after successful verification
-        self.seen[key] = now
+        with self._lock:
+            self.seen[key] = now
         return True, "OK"
 
 # --- tiny self‑tests ---------------------------------------------------------

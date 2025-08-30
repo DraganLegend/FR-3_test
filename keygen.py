@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import json, base64, os, sys, argparse
+import json, base64, os, sys, argparse, tempfile
 
 try:
     import oqs
@@ -60,10 +60,29 @@ def b64(x: bytes) -> str:
 def write_json(path: str, obj: dict, secret: bool = False):
     data = json.dumps(obj, ensure_ascii=False, indent=2)
     if secret:
-        # 直接以 0600 權限建立檔案，避免先產生寬鬆權限後再修改造成的短暫暴露
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(data)
+        # 以原子方式寫入秘密檔：先寫入臨時檔（0600、O_EXCL）再 os.replace 取代
+        dir_name = os.path.dirname(path) or "."
+        base_name = os.path.basename(path)
+        tmp_name = None
+        try:
+            # 建立唯一臨時檔（0600）避免競態與短暫權限暴露
+            fd, tmp_name = tempfile.mkstemp(prefix=f".{base_name}.", dir=dir_name, text=True)
+            try:
+                os.fchmod(fd, 0o600)
+            except Exception:
+                pass
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_name, path)
+        finally:
+            # 若替換失敗，清理臨時檔
+            if tmp_name and os.path.exists(tmp_name):
+                try:
+                    os.remove(tmp_name)
+                except Exception:
+                    pass
     else:
         with open(path, "w", encoding="utf-8") as f:
             f.write(data)

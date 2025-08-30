@@ -11,4 +11,5 @@ wheels/
 
 # Generated key and data files
 ml_dsa_*.json
+signed_cmd.jsontmp_oqs_build/
 signed_cmd.json
